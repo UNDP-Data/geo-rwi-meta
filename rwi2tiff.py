@@ -1,87 +1,90 @@
 import os
-import pandas as pd
-import numpy as np
-import rasterio
-from rasterio.transform import from_origin
-import mercantile
+import subprocess
+import json
 from pathlib import Path
 
-# 📌 Function to convert a quadkey into x, y tile coordinates
-def quadkey_to_tile(quadkey, zoom_level: int = 14):
-    """
-    Converts a quadkey into x, y tile coordinates at a given zoom level.
-    Ensures that the quadkey is treated as a string and zero-padded for consistency.
-    """
-    tile = mercantile.quadkey_to_tile(str(quadkey).zfill(zoom_level))
-    return tile.x, tile.y
+# Constant: Earth Circumference in Meters
+EARTH_CIRCUMFERENCE = 40075016.6855784  # meters
 
-# 📌 Process data and create a raster (GeoTIFF)
-def rwi2tiff(csv_file: str, output_file: str, zoom_level: int = 14):
+
+def calculate_pixel_size(zoom_level: int = 14):
     """
-    Converts a CSV file containing quadkeys and RWI values into a raster (GeoTIFF).
-    The RWI values are mapped to a grid based on their corresponding tiles.
+    Calculates the approximate pixel size in degrees for a given zoom level.
+    Uses Web Mercator tile size and converts to WGS84 degrees.
+
+    Returns:
+    - Pixel size in degrees (for EPSG:4326)
+    """
+    tile_size_meters = EARTH_CIRCUMFERENCE / (2 ** zoom_level)  # Tile size in meters
+    pixel_size_meters = tile_size_meters / 256  # Pixel size in meters
+    pixel_size_degrees = pixel_size_meters / 111320  # Convert meters to degrees
+
+    return pixel_size_degrees
+
+
+def get_fgb_extent(input_fgb: str):
+    """
+    Uses `ogrinfo` to get the bounding box (extent) of an FGB file.
+
+    Returns:
+    - min_x, min_y, max_x, max_y (bounding box in EPSG:4326)
+    """
+    command = ["ogrinfo", "-al", "-json", input_fgb]
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
+
+    data = json.loads(result.stdout)
+    # Extract extent correctly from the first layer
+    try:
+        extent = data["layers"][0]["geometryFields"][0]["extent"]
+        min_x, max_x = extent[0], extent[2]  # Longitude (West, East)
+        min_y, max_y = extent[1], extent[3]  # Latitude (South, North)
+        return min_x, min_y, max_x, max_y
+    except (KeyError, IndexError) as e:
+        print(f"Error extracting extent from {input_fgb}: {e}")
+        return None
+
+
+def rasterize_to_tiff(input_fgb: str, temp_tiff: str, zoom_level: int = 14):
+    """
+    Rasterizes an FGB file into a temporary TIFF using `gdal_rasterize`.
 
     Parameters:
-    - csv_file: Path to the input CSV file.
-    - output_file: Path to the output GeoTIFF file.
-    - zoom_level: Zoom level for Mercator tile calculations (default is 14).
+    - input_fgb: Path to the input FGB file.
+    - temp_tiff: Path to the output temporary raster file (GeoTIFF).
+    - zoom_level: The zoom level to calculate pixel resolution (default: 14).
     """
-    df = pd.read_csv(csv_file)
+    # Get the bounding box of the FGB file
+    extent = get_fgb_extent(input_fgb)
+    if extent is None:
+        print(f"Skipping {input_fgb}: Could not determine extent.")
+        return False
 
-    if df.empty:
-        print(f"Skipping {csv_file}: empty file")
-        return
+    min_x, min_y, max_x, max_y = extent
 
-    # Convert quadkey to x, y tile coordinates
-    df["x"], df["y"] = zip(*df["quadkey"].apply(lambda qk: quadkey_to_tile(qk, zoom_level)))
+    # Calculate pixel size from zoom level
+    pixel_size = calculate_pixel_size(zoom_level)
 
-    # Determine the bounding range of X and Y tiles
-    min_x, max_x = df["x"].min(), df["x"].max()
-    min_y, max_y = df["y"].min(), df["y"].max()
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(temp_tiff), exist_ok=True)
 
-    # 🌍 Generate a list of longitude and latitude values from tile boundaries
-    lons = [mercantile.ul(x, min_y, zoom_level).lng for x in range(min_x, max_x + 2)]
-    lats = [mercantile.ul(min_x, y, zoom_level).lat for y in range(min_y, max_y + 2)]
-    lats.reverse()  # Reverse the list to match the raster's row order
+    # Construct gdal_rasterize command
+    command = [
+        "gdal_rasterize",
+        "-a", "rwi",  # Attribute field to burn into raster
+        "-tr", str(pixel_size), str(pixel_size),  # Automatically set pixel size
+        "-te", str(min_x), str(min_y), str(max_x), str(max_y),  # Set bounding box
+        "-ot", "Float32",  # Output type
+        "-a_nodata", "-9999",
+        "-co", "COMPRESS=ZSTD",
+        "-co", "BIGTIFF=YES",
+        input_fgb, temp_tiff  # Input and Output files
+    ]
 
-    # Compute the number of rows and columns in the raster
-    cols = len(lons) - 1
-    rows = len(lats) - 1
+    # Run the command
+    subprocess.run(command, check=True)
 
-    # Create an empty raster filled with NaN values
-    raster = np.full((rows, cols), np.nan, dtype=np.float32)
+    print(f"Rasterized TIFF created: {temp_tiff}")
 
-    # 📌 Convert x, y tile coordinates to raster indices and assign RWI values
-    for _, row in df.iterrows():
-        # Convert x and y tile coordinates to integer indices
-        col = int(row["x"]) - min_x
-        row_idx = int(max_y - row["y"])
-
-        # Ensure indices are within valid raster bounds
-        col = max(0, min(cols - 1, col))
-        row_idx = max(0, min(rows - 1, row_idx))
-
-        # Assign the RWI value to the raster cell
-        raster[row_idx, col] = row["rwi"]
-
-    # 🌍 Define the GeoTIFF transformation matrix (origin at the top-left)
-    transform = from_origin(lons[0], lats[0], lons[1] - lons[0], lats[0] - lats[1])
-
-    # 🚀 Save the raster as a GeoTIFF file
-    with rasterio.open(
-            output_file,
-            "w",
-            driver="GTiff",
-            height=rows,
-            width=cols,
-            count=1,
-            dtype=raster.dtype,
-            crs="EPSG:4326",
-            transform=transform,
-    ) as dst:
-        dst.write(raster, 1)
-
-    print(f"{output_file} was generated.")
 
 def process_csv_files(input_dir: str, output_dir: str):
     """
@@ -91,23 +94,27 @@ def process_csv_files(input_dir: str, output_dir: str):
         os.makedirs(output_dir)
 
     folder_path = Path(input_dir)
-    csv_files = list(folder_path.glob("*.csv"))
+    files = sorted(folder_path.glob("*.fgb"))
 
-    # Process each CSV file and convert it to GeoTIFF
-    for csv_file in csv_files:
-        output_file = f"{output_dir}{csv_file.name.replace('.csv', '.tif')}"
-        rwi2tiff(csv_file, output_file)
+    # Process each FGB file and convert it to GeoTIFF
+    for file in files:
+        output_tiff = f"{output_dir}{file.name.replace('.fgb', '.tif')}"
+        rasterize_to_tiff(str(file), output_tiff)
+
 
 if __name__ == '__main__':
     # Define input directory (CSV) and output directory (GeoTIFF)
-    input_dir = './data/relative-wealth-index-april-2021/'
+    input_dir = './data/output_fgb/'
     output_dir = './data/output_tiff/'
     process_csv_files(input_dir, output_dir)
 
     # Example of processing a single file manually (commented out)
-    # input_dir = './data/relative-wealth-index-april-2021/LCA_relative_wealth_index.csv'
-    # output_dir = './data/output/LCA_relative_wealth_index.tif'
+    # input_fgb = './data/relative_wealth_index.fgb'
+    # output_cog = './data/relative_wealth_index.tif'
+    # temp_tiff = './data/relative_wealth_index_temp.tif'
 
-    # input_dir = './data/relative-wealth-index-april-2021/ETH_relative_wealth_index.csv'
-    # output_dir = './data/output/ETH_relative_wealth_index.tif'
-    # rwi2tiff(input_dir, output_dir)
+    # input_fgb = './data/output_fgb/albania_relative_wealth_index.fgb'
+    # output_cog = './data/output_tiff/albania_relative_wealth_index.tif'
+    # temp_tiff = './data/output_tiff/albania_relative_wealth_index_temp.tif'
+    # if rasterize_to_tiff(input_fgb, temp_tiff, zoom_level=14):
+    #     convert_tiff_to_cog(temp_tiff, output_cog)

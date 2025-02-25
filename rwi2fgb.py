@@ -34,6 +34,10 @@ def rwi2fgb(csv_file: str, output_file: str):
     # Generate polygons from quadkeys
     df["geometry"] = df["quadkey"].apply(quadkey_to_polygon)
 
+    # Add a new column storing the original CSV filename
+    source_filename = Path(csv_file).name
+    df["source"] = source_filename
+
     # Convert to a GeoDataFrame with EPSG:4326 (WGS84) projection
     gdf = gpd.GeoDataFrame(df, geometry="geometry", crs="EPSG:4326")
 
@@ -93,7 +97,7 @@ if __name__ == '__main__':
     # Convert all CSV files in the input directory to FlatGeobuf format
     input_dir = "./data/relative-wealth-index-april-2021/"
     output_dir = "./data/output_fgb/"
-    process_csv_to_fgb(input_dir, output_dir)
+    # process_csv_to_fgb(input_dir, output_dir)
 
     # Merge all generated FGB files into a single FlatGeobuf file
     merged_fgb = "./data/relative_wealth_index.fgb"
