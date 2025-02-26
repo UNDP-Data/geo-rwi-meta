@@ -18,9 +18,9 @@ def create_vrt(input_dir: str, output_vrt: str):
 
     # Construct the gdalbuildvrt command
     command = [
-                  "gdalbuildvrt",
-                  "-overwrite",
-                  output_vrt
+                "gdalbuildvrt",
+                "-overwrite",
+                output_vrt
               ] + tiff_list
 
     # Run the command
@@ -40,18 +40,15 @@ def convert_tiff_to_cog(temp_tiff: str, output_cog: str):
     command = [
         "gdal_translate",
         "-of", "COG",
-        "-a_nodata", "-9999",
-        "-co", "COMPRESS=DEFLATE",
+        "-co", "TILING_SCHEME=GoogleMapsCompatible",
+        "-co", "ZOOM_LEVEL=14",
+        "-co", "COMPRESS=ZSTD",
+        "-co", "PREDICTOR=YES",
         "-co", "BIGTIFF=YES",
-        "-co", "TILED=YES",
-        "-co", "OVERVIEW_RESAMPLING=NEAREST",
-        "-co", "BLOCKSIZE=256",
-        "-co", "OVERVIEWS=IGNORE_EXISTING",
-        "-co", "PREDICTOR = YES",
-        "-co", "TARGET_SRS=EPSG:3857",
-        "-co", "RESAMPLING=NEAREST",
+        "-CO", "RESAMPLING=NEAREST",
+        "-CO", "OVERVIEW_RESAMPLING=NEAREST",
         "-co", "NUM_THREADS=ALL_CPUS",
-        "-r", "bilinear",
+        "-co", "OVERVIEWS=IGNORE_EXISTING",
         temp_tiff, output_cog  # Input and Output files
     ]
 
