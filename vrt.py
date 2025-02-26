@@ -43,7 +43,7 @@ def convert_tiff_to_cog(temp_tiff: str, output_cog: str):
         "-co", "TILING_SCHEME=GoogleMapsCompatible",
         "-co", "ZOOM_LEVEL=14",
         "-co", "COMPRESS=ZSTD",
-        "-co", "PREDICTOR=YES",
+        "-co", "PREDICTOR=2",
         "-co", "BIGTIFF=YES",
         "-CO", "RESAMPLING=NEAREST",
         "-CO", "OVERVIEW_RESAMPLING=NEAREST",
