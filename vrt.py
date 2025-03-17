@@ -29,7 +29,7 @@ def create_vrt(input_dir: str, output_vrt: str):
     print(f"Virtual Raster (VRT) created: {output_vrt}")
 
 
-def convert_tiff_to_cog(temp_tiff: str, output_cog: str):
+def convert_tiff_to_cog(temp_tiff: str, output_cog: str, zoom_level=14):
     """
     Converts a standard TIFF into a Cloud-Optimized GeoTIFF (COG) using `gdal_translate`.
 
@@ -41,7 +41,7 @@ def convert_tiff_to_cog(temp_tiff: str, output_cog: str):
         "gdal_translate",
         "-of", "COG",
         "-co", "TILING_SCHEME=GoogleMapsCompatible",
-        "-co", "ZOOM_LEVEL=14",
+        "-co", f"ZOOM_LEVEL={zoom_level}",
         "-co", "COMPRESS=ZSTD",
         "-co", "PREDICTOR=2",
         "-co", "BIGTIFF=YES",
@@ -67,5 +67,5 @@ if __name__ == '__main__':
     output_cog = "./relative_wealth_index.tif"
     create_vrt(input_dir, output_vrt)
 
-    convert_tiff_to_cog(output_vrt, output_cog)
+    convert_tiff_to_cog(output_vrt, output_cog, zoom_level=7)
 
