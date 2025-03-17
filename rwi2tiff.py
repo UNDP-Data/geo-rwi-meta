@@ -2,12 +2,19 @@ import os
 import subprocess
 import json
 from pathlib import Path
+from pyproj import Geod
+
 
 # Constant: Earth Circumference in Meters
 EARTH_CIRCUMFERENCE = 40075016.6855784  # meters
 
 
-def calculate_pixel_size(zoom_level: int = 14):
+def get_meters_per_degree_lat(lat: float = 0) -> float:
+    geod = Geod(ellps="WGS84")
+    _, _, distance = geod.inv(0, lat, 0, lat + 1)
+    return distance
+
+def calculate_pixel_size(zoom_level: int = 14, lat: float = 0):
     """
     Calculates the approximate pixel size in degrees for a given zoom level.
     Uses Web Mercator tile size and converts to WGS84 degrees.
@@ -15,10 +22,11 @@ def calculate_pixel_size(zoom_level: int = 14):
     Returns:
     - Pixel size in degrees (for EPSG:4326)
     """
-    tile_size_meters = EARTH_CIRCUMFERENCE / (2 ** zoom_level)  # Tile size in meters
-    pixel_size_meters = tile_size_meters / 256  # Pixel size in meters
-    pixel_size_degrees = pixel_size_meters / 111320  # Convert meters to degrees
+    tile_size_meters = EARTH_CIRCUMFERENCE / (2 ** zoom_level)
+    pixel_size_meters = tile_size_meters / 256
+    meters_per_degree = get_meters_per_degree_lat(lat)
 
+    pixel_size_degrees = pixel_size_meters / meters_per_degree  # Convert meters to degrees
     return pixel_size_degrees
 
 
@@ -62,7 +70,7 @@ def rasterize_to_tiff(input_fgb: str, temp_tiff: str, zoom_level: int = 14):
     min_x, min_y, max_x, max_y = extent
 
     # Calculate pixel size from zoom level
-    pixel_size = calculate_pixel_size(zoom_level)
+    pixel_size = calculate_pixel_size(zoom_level, lat=(min_y + max_y) / 2)
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(temp_tiff), exist_ok=True)
@@ -86,7 +94,7 @@ def rasterize_to_tiff(input_fgb: str, temp_tiff: str, zoom_level: int = 14):
     print(f"Rasterized TIFF created: {temp_tiff}")
 
 
-def process_csv_files(input_dir: str, output_dir: str):
+def process_csv_files(input_dir: str, output_dir: str, zoom_level: int = 14):
     """
     Processes all CSV files in the given input directory and converts them into raster (GeoTIFF) format.
     """
@@ -99,14 +107,14 @@ def process_csv_files(input_dir: str, output_dir: str):
     # Process each FGB file and convert it to GeoTIFF
     for file in files:
         output_tiff = f"{output_dir}{file.name.replace('.fgb', '.tif')}"
-        rasterize_to_tiff(str(file), output_tiff)
+        rasterize_to_tiff(str(file), output_tiff, zoom_level)
 
 
 if __name__ == '__main__':
     # Define input directory (CSV) and output directory (GeoTIFF)
     input_dir = './data/output_fgb/'
-    output_dir = './data/output_tiff/'
-    process_csv_files(input_dir, output_dir)
+    output_dir = './data/output_tiff_z11/'
+    process_csv_files(input_dir, output_dir, zoom_level=10)
 
     # Example of processing a single file manually (commented out)
     # input_fgb = './data/relative_wealth_index.fgb'
@@ -116,5 +124,4 @@ if __name__ == '__main__':
     # input_fgb = './data/output_fgb/albania_relative_wealth_index.fgb'
     # output_cog = './data/output_tiff/albania_relative_wealth_index.tif'
     # temp_tiff = './data/output_tiff/albania_relative_wealth_index_temp.tif'
-    # if rasterize_to_tiff(input_fgb, temp_tiff, zoom_level=14):
-    #     convert_tiff_to_cog(temp_tiff, output_cog)
+    # rasterize_to_tiff(input_fgb, temp_tiff, zoom_level=10)
